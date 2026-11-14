@@ -58,7 +58,8 @@ func (s *Schedule) seek(t time.Time, dir int) (time.Time, bool) {
 				start = t.Hour()*3600 + t.Minute()*60 + t.Second()
 			}
 			if tod, ok := pickTimeOfDay(secs, mins, hrs, start, dir); ok {
-				return day.Add(time.Duration(tod) * time.Second), true
+				h, m, sc := tod/3600, (tod%3600)/60, tod%60
+				return wallTime(day.Year(), day.Month(), day.Day(), h, m, sc, day.Location()), true
 			}
 		}
 		day = day.AddDate(0, 0, dir)
@@ -89,6 +90,23 @@ func pickTimeOfDay(secs, mins, hrs []int, start, dir int) (int, bool) {
 		}
 	}
 	return best, best >= 0
+}
+
+// wallTime builds the instant for a wall-clock time. Ordinary times survive
+// DST transitions untouched. A nonexistent wall time (spring-forward gap)
+// fires at the first existing wall-clock time at or after it; an ambiguous
+// wall time (fall fold) resolves to its first occurrence, per Go's time.Date.
+// This is a documented dialect policy, not universal Vixie behavior; other
+// cron implementations skip gap times or delay by the offset.
+func wallTime(y int, mo time.Month, d, h, m, sc int, loc *time.Location) time.Time {
+	for off := 0; off <= 4*60; off++ {
+		t := time.Date(y, mo, d, h, m+off, sc, 0, loc)
+		if t.Day() == d && t.Hour() == (h+(m+off)/60)%24 && t.Minute() == (m+off)%60 && t.Second() == sc {
+			return t
+		}
+	}
+	// A gap longer than four hours: fall back to Go's normalization.
+	return time.Date(y, mo, d, h, m, sc, 0, loc)
 }
 
 func all(lo, hi int) []int {

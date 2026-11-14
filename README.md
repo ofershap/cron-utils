@@ -4,7 +4,7 @@
 
 **Your agent emits `0 9 * * 1-5`. Nobody on your team can read it.**
 
-Agents, schedulers and infra-as-code emit cron expressions; humans get handed strings like `30 2 */3 * 1-5` and guess. The Go options are stale: the English descriptors (lnquy/cron, jsuar/go-cron-descriptor) were last updated in 2020, and lnquy/cron has an [open issue](https://github.com/lnquy/cron/issues) reporting a panic on invalid input. For occurrence computation, gorhill/cronexpr is archived. Feeding LLM output into a parser that panics is not a parse error, it's an outage.
+Agents, schedulers and infra-as-code emit cron expressions; humans get handed strings like `30 2 */3 * 1-5` and guess. The English descriptors for Go (lnquy/cron, jsuar/go-cron-descriptor) were last updated in 2020, and lnquy/cron has an [open issue](https://github.com/lnquy/cron/issues) reporting a panic on invalid input. For occurrence computation, gorhill/cronexpr is archived. Feeding LLM output into a parser that panics is not a parse error, it's an outage.
 
 cron-utils validates, explains and previews cron schedules in one import. Bad input gets a typed error that says which field is wrong and why, so an agent can feed it straight back to the model.
 
@@ -52,7 +52,7 @@ Standard library only at runtime. (Test-only dependencies compare fire times aga
 - **Previews fire times**: `Next`, `Prev` and `NextN` compute occurrences in the caller's location, with day-skipping instead of minute-by-minute iteration. Measured: `0 0 29 2 *` from three years out resolves in about 34µs (BenchmarkNextFeb29, 2.6GHz Xeon; see bench_test.go).
 - **Speaks the dialects agents emit**: 5-field Vixie, 6-field with leading seconds, `@daily` and friends, month and weekday names, `?`, and the Quartz specials `L`, `LW`, `15W`, `FRIL`, `FRI#3`.
 - **Vixie-correct**: when both day-of-month and day-of-week are restricted, a day matching either fires, the way cron itself behaves. A day field counts as restricted unless it's `*`, `?` or a `*` with step 1 - the same rule as robfig/cron.
-- **Differentially tested**: fire times match gorhill/cronexpr and robfig/cron v3 on 600 generated schedules covering standard and Quartz dialects, leap dates, impossible schedules and strict Next/Prev boundaries (see differential_test.go). Where the two engines disagree with each other (a `*/1` day field next to a restricted one), cron-utils follows robfig/cron and the differential scope says so.
+- **Differentially tested, per engine** (differential_test.go): `Next` matches robfig/cron v3 on 300 generated standard 5-field schedules and gorhill/cronexpr on 300 generated 6-field schedules including the Quartz L/LW/nW/xL/x#n specials - each over leap dates, impossible schedules (Feb 31) and strict Next boundaries. `Prev` and the Sunday-as-7 dialect are covered by pinned golden tests, not by the engines. Where cronexpr and robfig disagree with each other (a `*/1` day field beside a restricted one), cron-utils follows robfig/cron and the differential scope excludes the case.
 
 ## What it doesn't do
 
@@ -60,7 +60,9 @@ Standard library only at runtime. (Test-only dependencies compare fire times aga
 - **No `@reboot`.** It fires at daemon startup, not on a schedule; Parse rejects it with a clear error.
 - **English descriptions only**, for now. The descriptor is one function, so locales are a possible later addition.
 - **7-field Quartz years are rejected** with a clear error rather than silently mis-parsed.
-- **DST is pinned, not clever**: fire times are time-of-day offsets from local midnight. A schedule landing in the spring-forward gap fires at the first valid instant after it; a schedule in the fall fold fires once, at the first occurrence. See dst_test.go.
+- **Bounded horizon**: `Next` and `Prev` search six years out and return `ok=false` beyond that; `MustNext` panics in that case (the one intentional panic in the package).
+- **Day-of-week numbering**: 0-6 and 7 are all accepted, 0 and 7 both Sunday (Vixie style); `SUN`-`SAT` names are case-insensitive.
+- **DST policy is pinned, not clever**: ordinary wall-clock times never drift across transitions. A schedule whose wall time doesn't exist (spring-forward gap) fires at the first existing wall-clock time at or after it; a schedule in the fall fold fires once, at its first occurrence. This is a chosen dialect policy, not universal Vixie compatibility - other crons skip gap times or delay by the offset. Pinned, including a half-hour zone, in dst_test.go.
 
 ## Errors an agent can use
 
