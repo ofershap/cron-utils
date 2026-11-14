@@ -1,0 +1,19 @@
+# cron-utils
+
+> Validate, explain and preview cron schedules in one Go import
+> (github.com/ofershap/cron-utils), plus a small CLI. Five and six field
+> expressions with extensions (L, W, #, ?, names, steps). Typed errors name
+> the bad field and why, so agent output can be fed straight back to the
+> model. English descriptions and next-N occurrence previews. Standard
+> library only, no dependencies.
+
+## Usage
+
+- Library: s, err := cronutils.Parse("0 9 * * FRI#3"); s.Describe() returns English; s.NextN(from, n) previews occurrences.
+- CLI: cron-utils "0 9 * * 1-5" prints "At 09:00 AM, Monday through Friday".
+- Bad input returns *cronutils.ParseError with field, offending text and a plain message.
+
+## Docs
+
+- [README](https://github.com/ofershap/cron-utils#readme): install, syntax coverage, examples, Q&A
+- [pkg.go.dev](https://pkg.go.dev/github.com/ofershap/cron-utils): library API
