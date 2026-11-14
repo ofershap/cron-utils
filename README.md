@@ -4,7 +4,7 @@
 
 **Your agent emits `0 9 * * 1-5`. Nobody on your team can read it.**
 
-Agents, schedulers and infra-as-code emit cron expressions; humans get handed strings like `30 2 */3 * 1-5` and guess. The English descriptors for Go (lnquy/cron, jsuar/go-cron-descriptor) were last updated in 2020, and lnquy/cron has an [open issue](https://github.com/lnquy/cron/issues) reporting a panic on invalid input. For occurrence computation, gorhill/cronexpr is archived. Feeding LLM output into a parser that panics is not a parse error, it's an outage.
+Agents, schedulers and infra-as-code emit cron expressions; humans get handed strings like `30 2 */3 * 1-5` and guess. The English descriptors for Go ([lnquy/cron](https://github.com/lnquy/cron), [jsuar/go-cron-descriptor](https://github.com/jsuar/go-cron-descriptor)) were last updated in 2020, and lnquy/cron has an [open issue](https://github.com/lnquy/cron/issues) reporting a panic on invalid input. For occurrence computation, [gorhill/cronexpr](https://github.com/gorhill/cronexpr) is archived. Feeding LLM output into a parser that panics is not a parse error, it's an outage.
 
 cron-utils validates, explains and previews cron schedules in one import. Bad input gets a typed error that says which field is wrong and why, so an agent can feed it straight back to the model.
 
