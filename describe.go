@@ -120,7 +120,7 @@ func clock(h, m int) string {
 func (s *Schedule) domPart() string {
 	d := s.Dom
 	switch {
-	case d.any:
+	case d.star:
 		return ""
 	case d.last:
 		return "on the last day of the month"
@@ -153,7 +153,7 @@ func (s *Schedule) monthPart() string {
 func (s *Schedule) dowPart() string {
 	d := s.Dow
 	switch {
-	case d.any:
+	case d.star:
 		return ""
 	case d.lastDow >= 0:
 		return fmt.Sprintf("on the last %s of the month", dowLong[d.lastDow])

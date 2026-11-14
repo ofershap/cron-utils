@@ -33,12 +33,16 @@ const (
 )
 
 // fieldInfo is a parsed simple field (seconds, minutes, hours, month).
+// any means the values cover the whole range (a seek/describe shortcut);
+// star follows robfig/cron's starBit: the field text had a '*' item with
+// step 1, which is what decides the day-of-month/day-of-week OR rule.
 type fieldInfo struct {
 	kind   kind
 	vals   []int // sorted, deduped
 	step   int
 	lo, hi int
 	any    bool
+	star   bool
 }
 
 func (f fieldInfo) has(v int) bool {
@@ -50,8 +54,11 @@ func (f fieldInfo) has(v int) bool {
 }
 
 // domSpec covers the day-of-month field including Quartz specials.
+// star follows Vixie: true when the field text starts with '*' or is '?',
+// which is what decides the OR rule; value matching still applies for
+// stepped fields like */2.
 type domSpec struct {
-	any            bool
+	star           bool
 	days           []int
 	last           bool // L
 	lastWeekday    bool // LW
@@ -60,7 +67,7 @@ type domSpec struct {
 
 // dowSpec covers the day-of-week field including Quartz specials.
 type dowSpec struct {
-	any     bool
+	star    bool
 	dows    []int // 0 = Sunday
 	lastDow int   // xL, -1 when unused
 	nthDow  int   // x#n: weekday
@@ -165,11 +172,8 @@ func parseSimple(text, field string, min, max int, names map[string]int) (fieldI
 	bad := func(msg string) (fieldInfo, error) {
 		return fieldInfo{}, &ParseError{Field: field, Value: text, Msg: msg}
 	}
-	if text == "*" || text == "?" && (field == "day of month" || field == "day of week") {
-		return fieldInfo{kind: kindAny, any: true}, nil
-	}
-	if text == "?" {
-		return fieldInfo{kind: kindAny, any: true}, nil
+	if text == "*" || text == "?" {
+		return fieldInfo{kind: kindAny, any: true, star: true}, nil
 	}
 	if text == "" {
 		return bad("empty field")
@@ -177,11 +181,15 @@ func parseSimple(text, field string, min, max int, names map[string]int) (fieldI
 	items := strings.Split(text, ",")
 	var vals []int
 	var firstStep, firstLo, firstHi int
+	var star bool
 	kindSeen := kindSingle
 	for _, item := range items {
 		lo, hi, step, err := parseItem(item, field, text, min, max, names)
 		if err != nil {
 			return fieldInfo{}, err
+		}
+		if strings.HasPrefix(item, "*") && step == 1 {
+			star = true
 		}
 		if len(items) == 1 {
 			if step > 1 {
@@ -206,9 +214,9 @@ func parseSimple(text, field string, min, max int, names map[string]int) (fieldI
 	sort.Ints(vals)
 	vals = dedupe(vals)
 	if len(vals) == max-min+1 {
-		return fieldInfo{kind: kindAny, any: true, vals: vals}, nil
+		return fieldInfo{kind: kindAny, any: true, vals: vals, star: star}, nil
 	}
-	fi := fieldInfo{kind: kindSeen, vals: vals, step: firstStep, lo: firstLo, hi: firstHi}
+	fi := fieldInfo{kind: kindSeen, vals: vals, step: firstStep, lo: firstLo, hi: firstHi, star: star}
 	if kindSeen == kindList || (kindSeen == kindSingle && len(vals) > 1) {
 		fi.kind = kindList
 	}
@@ -280,7 +288,7 @@ func parseDOM(text string) (domSpec, error) {
 	up := strings.ToUpper(text)
 	switch {
 	case up == "*" || up == "?":
-		return domSpec{any: true}, nil
+		return domSpec{star: true}, nil
 	case up == "L":
 		return domSpec{last: true}, nil
 	case up == "LW":
@@ -296,7 +304,7 @@ func parseDOM(text string) (domSpec, error) {
 	if err != nil {
 		return domSpec{}, err
 	}
-	return domSpec{days: fi.vals}, nil
+	return domSpec{star: fi.star, days: fi.vals}, nil
 }
 
 func parseDOW(text string) (dowSpec, error) {
@@ -305,19 +313,19 @@ func parseDOW(text string) (dowSpec, error) {
 	}
 	up := strings.ToUpper(text)
 	if up == "*" || up == "?" {
-		return dowSpec{any: true, lastDow: -1}, nil
+		return dowSpec{star: true, lastDow: -1}, nil
 	}
 	if i := strings.Index(up, "#"); i >= 0 {
 		d, errD := valueOf(up[:i], dowNames)
 		n, errN := strconv.Atoi(up[i+1:])
-		if errD != nil || errN != nil || n < 1 || n > 5 {
+		if errD != nil || d < 0 || d > 7 || errN != nil || n < 1 || n > 5 {
 			return bad("x#n wants a weekday and n 1-5, e.g. FRI#3")
 		}
 		return dowSpec{nthDow: normDow(d), nthN: n, lastDow: -1}, nil
 	}
 	if strings.HasSuffix(up, "L") && up != "L" {
 		d, err := valueOf(up[:len(up)-1], dowNames)
-		if err != nil {
+		if err != nil || d < 0 || d > 7 {
 			return bad("xL wants a weekday, e.g. FRIL for the last Friday")
 		}
 		return dowSpec{lastDow: normDow(d)}, nil
@@ -330,7 +338,7 @@ func parseDOW(text string) (dowSpec, error) {
 	for _, v := range fi.vals {
 		vals = append(vals, normDow(v))
 	}
-	return dowSpec{dows: dedupe(sorted(vals)), lastDow: -1}, nil
+	return dowSpec{star: fi.star, dows: dedupe(sorted(vals)), lastDow: -1}, nil
 }
 
 func normDow(v int) int {

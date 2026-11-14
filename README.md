@@ -4,9 +4,9 @@
 
 **Your agent emits `0 9 * * 1-5`. Nobody on your team can read it.**
 
-Agents, schedulers and infra-as-code emit cron expressions; humans get handed strings like `30 2 */3 * 1-5` and guess. The Go libraries that translate cron to English are six years stale: lnquy/cron panics on invalid input ([open issue](https://github.com/lnquy/cron/issues)), jsuar/go-cron-descriptor stopped in 2020, and gorhill/cronexpr is archived. Feeding LLM output into a parser that panics is not a parse error, it's an outage.
+Agents, schedulers and infra-as-code emit cron expressions; humans get handed strings like `30 2 */3 * 1-5` and guess. The Go options are stale: the English descriptors (lnquy/cron, jsuar/go-cron-descriptor) were last updated in 2020, and lnquy/cron has an [open issue](https://github.com/lnquy/cron/issues) reporting a panic on invalid input. For occurrence computation, gorhill/cronexpr is archived. Feeding LLM output into a parser that panics is not a parse error, it's an outage.
 
-cron-utils validates, explains and previews cron schedules in one import. It never panics: bad input gets a typed error that says which field is wrong and why, so an agent can feed it straight back to the model.
+cron-utils validates, explains and previews cron schedules in one import. Bad input gets a typed error that says which field is wrong and why, so an agent can feed it straight back to the model.
 
 ```go
 s, err := cronutils.Parse("0 9 * * FRI#3")
@@ -17,8 +17,9 @@ if err != nil {
 fmt.Println(s.Describe())
 // At 09:00 AM, on the third Friday of the month
 
-fmt.Println(s.NextN(time.Now(), 3))
-// [Fri Nov 20, 2026 09:00  Fri Dec 18, 2026 09:00  Fri Jan 15, 2027 09:00]
+from := time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)
+fmt.Println(s.NextN(from, 3))
+// [2026-11-20 09:00:00 +0000 UTC 2026-12-18 09:00:00 +0000 UTC 2027-01-15 09:00:00 +0000 UTC]
 ```
 
 There's also a small CLI for humans and demos:
@@ -42,15 +43,16 @@ CLI:
 go install github.com/ofershap/cron-utils/cmd/cron-utils@latest
 ```
 
-Standard library only. No dependencies.
+Standard library only at runtime. (Test-only dependencies compare fire times against gorhill/cronexpr and robfig/cron in CI; they are not imported by the library.)
 
 ## What it does
 
 - **Describes cron in English**, cronstrue-style: `0 9 * * 1-5` becomes "At 09:00 AM, Monday through Friday".
-- **Validates with typed errors**: `ParseError` names the field, quotes the offending text and says what's wrong. Parse never panics, whatever the input.
-- **Previews fire times**: `Next`, `Prev` and `NextN` compute occurrences in the caller's location, with day-skipping so `0 0 29 2 *` resolves in microseconds.
+- **Validates with typed errors**: `ParseError` names the field, quotes the offending text and says what's wrong. Parse and Describe are designed never to panic; observed evidence: `go fuzz` ran 1.7M generated inputs with zero panics, plus a hostile-input table test. That's test evidence, not a proof.
+- **Previews fire times**: `Next`, `Prev` and `NextN` compute occurrences in the caller's location, with day-skipping instead of minute-by-minute iteration. Measured: `0 0 29 2 *` from three years out resolves in about 34µs (BenchmarkNextFeb29, 2.6GHz Xeon; see bench_test.go).
 - **Speaks the dialects agents emit**: 5-field Vixie, 6-field with leading seconds, `@daily` and friends, month and weekday names, `?`, and the Quartz specials `L`, `LW`, `15W`, `FRIL`, `FRI#3`.
-- **Vixie-correct**: when both day-of-month and day-of-week are restricted, a day matching either fires, the way cron itself behaves.
+- **Vixie-correct**: when both day-of-month and day-of-week are restricted, a day matching either fires, the way cron itself behaves. A day field counts as restricted unless it's `*`, `?` or a `*` with step 1 - the same rule as robfig/cron.
+- **Differentially tested**: fire times match gorhill/cronexpr and robfig/cron v3 on 600 generated schedules covering standard and Quartz dialects, leap dates, impossible schedules and strict Next/Prev boundaries (see differential_test.go). Where the two engines disagree with each other (a `*/1` day field next to a restricted one), cron-utils follows robfig/cron and the differential scope says so.
 
 ## What it doesn't do
 
@@ -58,6 +60,7 @@ Standard library only. No dependencies.
 - **No `@reboot`.** It fires at daemon startup, not on a schedule; Parse rejects it with a clear error.
 - **English descriptions only**, for now. The descriptor is one function, so locales are a possible later addition.
 - **7-field Quartz years are rejected** with a clear error rather than silently mis-parsed.
+- **DST is pinned, not clever**: fire times are time-of-day offsets from local midnight. A schedule landing in the spring-forward gap fires at the first valid instant after it; a schedule in the fall fold fires once, at the first occurrence. See dst_test.go.
 
 ## Errors an agent can use
 
@@ -72,13 +75,13 @@ The error tells the model exactly what to fix. Contrast with a panic, which tell
 <code>cronutils.Describe("0 9 * * 1-5")</code> returns "At 09:00 AM, Monday through Friday". It handles 5-field and 6-field (seconds) expressions, @macros, month and weekday names, and the Quartz specials L, W and #.</details>
 
 <details><summary><b>How do I compute the next run time of a cron expression in Go?</b></summary>
-Parse the expression with <code>cronutils.Parse</code>, then call <code>Next(t)</code>, <code>Prev(t)</code> or <code>NextN(t, n)</code>. Times are computed in the input time's location, and sparse schedules like <code>0 0 29 2 *</code> (Feb 29) resolve in microseconds via day-skipping.</details>
+Parse the expression with <code>cronutils.Parse</code>, then call <code>Next(t)</code>, <code>Prev(t)</code> or <code>NextN(t, n)</code>. Times are computed in the input time's location, and sparse schedules like <code>0 0 29 2 *</code> (Feb 29) resolve in tens of microseconds via day-skipping (see bench_test.go).</details>
 
 <details><summary><b>Is cron-utils safe to run on LLM-generated cron expressions?</b></summary>
-Yes. Parse and Describe never panic; malformed input returns a typed <code>*ParseError</code> naming the field and problem, designed to be fed back to a model. The test suite includes a table of hostile inputs asserting no panics.</details>
+Yes. Malformed input returns a typed <code>*ParseError</code> naming the field and problem, designed to be fed back to a model. Parse and Describe are designed never to panic; observed evidence is a 1.7M-execution <code>go fuzz</code> run with zero panics plus a hostile-input table test, not a proof.</details>
 
 <details><summary><b>What's the difference between cron-utils and lnquy/cron or gorhill/cronexpr?</b></summary>
-Those libraries stalled in 2020; lnquy/cron has an open panic-on-invalid-input issue and gorhill/cronexpr is archived. cron-utils combines description and occurrence computation in one dependency-free package, supports Quartz specials, and treats hostile input as a first-class case.</details>
+Those libraries stalled in 2020; lnquy/cron has an open issue reporting a panic on invalid input and gorhill/cronexpr is archived. cron-utils combines description and occurrence computation in one package (stdlib-only at runtime), supports Quartz specials, and is differentially tested against gorhill/cronexpr and robfig/cron v3 for fire-time correctness.</details>
 
 ## Contributing
 

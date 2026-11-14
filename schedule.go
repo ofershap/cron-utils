@@ -107,16 +107,16 @@ func (s *Schedule) dayMatches(d time.Time) bool {
 	}
 	domOK := s.Dom.matches(d)
 	dowOK := s.Dow.matches(d)
-	domRestricted := !s.Dom.any
-	dowRestricted := !s.Dow.any
-	if domRestricted && dowRestricted {
+	// Vixie: a field counts as restricted unless its text starts with '*';
+	// when both are restricted a day matching either fires.
+	if !s.Dom.star && !s.Dow.star {
 		return domOK || dowOK
 	}
 	return domOK && dowOK
 }
 
 func (s domSpec) matches(d time.Time) bool {
-	if s.any {
+	if s.star && len(s.days) == 0 {
 		return true
 	}
 	day := d.Day()
@@ -138,7 +138,7 @@ func (s domSpec) matches(d time.Time) bool {
 }
 
 func (s dowSpec) matches(d time.Time) bool {
-	if s.any {
+	if s.star && len(s.dows) == 0 && s.lastDow < 0 && s.nthN == 0 {
 		return true
 	}
 	wd := int(d.Weekday())
